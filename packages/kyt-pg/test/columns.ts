@@ -9,6 +9,8 @@ const dataTypes: Record<PgType, string> = {
   boolean: 'boolean',
   jsonb: 'jsonb',
   timestamptz: 'timestamp with time zone',
+  date: 'date',
+  numeric: 'numeric',
   'double precision': 'double precision',
 };
 

@@ -164,3 +164,30 @@ it('goes from schema to typed queries through migrations', async () => {
     { title: 'Shown', fullName: 'Ada' },
   ]);
 });
+
+it('stores decimal as numeric and isoDate as date', async () => {
+  const Price = defineTable('Price', {
+    amount: v.pipe(v.string(), v.decimal()),
+    day: v.pipe(v.string(), v.isoDate()),
+  });
+  const snapshot = serializeSchema({ Price });
+  const priceDir = mkdtempSync(join(tmpdir(), 'kyt-pg-price-'));
+  writeFileSync(join(priceDir, 'price.sql'), diffToSQL(diffSnapshots(EMPTY_SNAPSHOT, snapshot)).join('\n') + '\n');
+  await migrate(db.sql, { dir: priceDir, log: () => {} });
+  rmSync(priceDir, { recursive: true, force: true });
+
+  const cols = await db.sql`
+    select column_name, data_type from information_schema.columns
+    where table_name = 'Price' and column_name in ('amount', 'day') order by column_name`;
+  expect([...cols]).toEqual([
+    { column_name: 'amount', data_type: 'numeric' },
+    { column_name: 'day', data_type: 'date' },
+  ]);
+
+  type DB = InferDB<{ Price: typeof Price }>;
+  const qb = createQueryBuilder<DB>();
+  await queryRun(db.sql, qb.insertInto('Price').values({ amount: '0.10', day: '2026-11-01' }).compile());
+  await queryRun(db.sql, qb.insertInto('Price').values({ amount: '0.20', day: '2026-11-01' }).compile());
+  const [sum] = await queryAll(db.sql, qb.selectFrom('Price').select((eb) => eb.fn.sum<string>('amount').as('total')).compile());
+  expect(sum.total).toBe('0.30');
+});

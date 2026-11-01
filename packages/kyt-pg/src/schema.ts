@@ -10,6 +10,8 @@ export type PgType =
   | 'boolean'
   | 'jsonb'
   | 'timestamptz'
+  | 'date'
+  | 'numeric'
   | 'double precision';
 
 export type IdType = 'bigint' | 'integer' | 'uuid';
@@ -244,7 +246,10 @@ export function pgTypeFromSchema(schema: AnyColSchema): ColumnTypeInfo {
   const notNull = !nullable;
   switch (inner?.type) {
     case 'string':
-      return { type: hasPipeAction(inner, 'uuid') ? 'uuid' : 'text', notNull };
+      if (hasPipeAction(inner, 'uuid')) return { type: 'uuid', notNull };
+      if (hasPipeAction(inner, 'decimal')) return { type: 'numeric', notNull };
+      if (hasPipeAction(inner, 'iso_date')) return { type: 'date', notNull };
+      return { type: 'text', notNull };
     case 'number':
       return { type: hasPipeAction(inner, 'integer') ? 'integer' : 'double precision', notNull };
     case 'bigint':

@@ -26,6 +26,17 @@ export const sql = postgres(process.env.DATABASE_URL!, {
 
 Without this option, postgres.js returns bigint values as strings.
 
+postgres.js returns `numeric` as a string, which matches `v.decimal()`. It turns `date` into a JS `Date` by default. Keep it a `YYYY-MM-DD` string, as `v.isoDate()` expects:
+
+```ts
+export const sql = postgres(process.env.DATABASE_URL!, {
+  types: {
+    bigint: postgres.BigInt,
+    day: { to: 1082, from: [1082], serialize: (x: string) => x, parse: (x: string) => x },
+  },
+});
+```
+
 `JSON.stringify` throws on a bigint. Turn ids into strings or numbers before you send JSON.
 
 ```ts
@@ -86,6 +97,8 @@ A virtual table is a typed view. It adds no table and needs no migration. It is 
 |---|---|
 | `v.string()` | `text` |
 | `v.pipe(v.string(), v.uuid())` | `uuid` |
+| `v.pipe(v.string(), v.decimal())` | `numeric` |
+| `v.pipe(v.string(), v.isoDate())` | `date` |
 | `v.number()` | `double precision` |
 | `v.pipe(v.number(), v.integer())` | `integer` |
 | `v.bigint()` | `bigint` |
