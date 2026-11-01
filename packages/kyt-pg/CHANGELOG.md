@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3 (2026-11-01)
+
+- Map `v.pipe(v.string(), v.decimal())` to `numeric` and `v.pipe(v.string(), v.isoDate())` to `date`. Both were `text` before.
+
 ## 0.1.2 (2026-10-24)
 
 - Add npm, CI and license badges to the README.

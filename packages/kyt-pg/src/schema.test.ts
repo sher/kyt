@@ -17,6 +17,8 @@ describe('pgTypeFromSchema', () => {
   it('maps each Valibot type to a Postgres type', () => {
     expect(pgTypeFromSchema(v.string()).type).toBe('text');
     expect(pgTypeFromSchema(v.pipe(v.string(), v.uuid())).type).toBe('uuid');
+    expect(pgTypeFromSchema(v.pipe(v.string(), v.decimal())).type).toBe('numeric');
+    expect(pgTypeFromSchema(v.pipe(v.string(), v.isoDate())).type).toBe('date');
     expect(pgTypeFromSchema(v.pipe(v.number(), v.integer())).type).toBe('integer');
     expect(pgTypeFromSchema(v.number()).type).toBe('double precision');
     expect(pgTypeFromSchema(v.bigint()).type).toBe('bigint');
