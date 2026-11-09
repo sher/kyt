@@ -4,6 +4,7 @@
 
 - Add `numeric(precision, scale)` for `v.decimal()` columns. It writes `numeric(18,2)` instead of `numeric`.
 - Write a named `CHECK` for each `v.picklist` column, so Postgres refuses other values. Removing a value writes a new `limits` warning. Renaming the column or table renames the check.
+- A check added to an existing table goes in as `NOT VALID`. `schema:diff` writes a second `_validate.sql` file that runs `VALIDATE CONSTRAINT` in its own transaction, so old rows are checked without blocking writes.
 - All tables share one `updatedAt` trigger function, `kyt_set_updatedAt`. The next `schema:diff` moves each old per-table function to it.
 - `defineIndex` and foreign key `columns` and `refColumns` take readonly arrays, so `as const` lists work.
 

@@ -113,7 +113,14 @@ Every other column is `NOT NULL`. Use `withDefault(schema, value)` to set a defa
 
 `numeric(precision, scale)` comes from `kyt-pg`. Put it last in the pipe, after `v.decimal()`. Postgres then rounds each value to `scale` places. The scale defaults to 0.
 
-A picklist check is named `<Table>_<column>_check`. Adding a value to the list rewrites the check with no warning. Removing a value writes the `limits` warning below.
+A picklist check is named `<Table>_<column>_check`.
+
+When a check changes on a table that already exists, `schema:diff` writes two files:
+
+1. `<n>_<name>.sql` adds the new check as `NOT VALID`. Postgres checks new rows at once and does not read the old ones, so the lock is short.
+2. `<n+1>_<name>_validate.sql` runs `VALIDATE CONSTRAINT`. It reads the old rows without blocking writes, because `migrate` runs it in its own transaction.
+
+Adding a value to the list needs no warning. Removing a value writes the `limits` warning in the validate file.
 
 ## Built-in columns
 
