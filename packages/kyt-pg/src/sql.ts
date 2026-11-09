@@ -1,5 +1,6 @@
 import type { Rename, SchemaDiff, TableChange } from './diff.js';
 import type {
+  CheckSnapshot,
   ColumnSnapshot,
   ForeignKeySnapshot,
   IndexSnapshot,
@@ -19,7 +20,34 @@ function columnSql(col: ColumnSnapshot): string {
   }
   const notNull = col.notNull ? ' NOT NULL' : '';
   const def = col.default !== undefined ? ` DEFAULT ${col.default}` : '';
-  return `${q(col.name)} ${col.type}${notNull}${def}`;
+  const check = col.check ? ` CONSTRAINT ${q(col.check.name)} ${checkSql(col.name, col.check)}` : '';
+  return `${q(col.name)} ${col.type}${notNull}${def}${check}`;
+}
+
+function literal(value: string | number): string {
+  return typeof value === 'number' ? String(value) : `'${value.replaceAll("'", "''")}'`;
+}
+
+function checkSql(column: string, check: CheckSnapshot): string {
+  return `CHECK (${q(column)} IN (${check.values.map(literal).join(', ')}))`;
+}
+
+function checkChangeSql(table: string, column: string, before: CheckSnapshot | undefined, after: CheckSnapshot | undefined, out: string[]): void {
+  const alter = `ALTER TABLE ${q(table)}`;
+  if (!before && !after) return;
+  if (before && after && JSON.stringify(before.values) === JSON.stringify(after.values)) {
+    if (before.name !== after.name) out.push(`${alter} RENAME CONSTRAINT ${q(before.name)} TO ${q(after.name)};`);
+    return;
+  }
+  if (before) out.push(`${alter} DROP CONSTRAINT IF EXISTS ${q(before.name)};`);
+  if (!after) return;
+  const removed = before ? before.values.filter((value) => !after.values.includes(value)) : undefined;
+  if (!removed || removed.length > 0) {
+    out.push(
+      `-- WARNING: limits "${table}"."${column}" to ${after.values.map(literal).join(', ')}. This fails if any row holds another value. Change those rows first.`,
+    );
+  }
+  out.push(`${alter} ADD CONSTRAINT ${q(after.name)} ${checkSql(column, after)};`);
 }
 
 function createTableSql(table: TableSnapshot): string {
@@ -61,20 +89,23 @@ function dropForeignKeySql(table: string, fk: ForeignKeySnapshot): string {
   return `ALTER TABLE ${q(table)} DROP CONSTRAINT ${q(fk.name)};`;
 }
 
-function createTriggerSql(trigger: TriggerSnapshot, table: string): string[] {
+function createTriggerSql(trigger: TriggerSnapshot, table: string, created: Set<string>): string[] {
   const ret = trigger.event === 'DELETE' ? 'OLD' : 'NEW';
-  const fn = q(`${trigger.name}_fn`);
-  return [
-    `CREATE OR REPLACE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN\n  ${trigger.body}\n  RETURN ${ret};\nEND $$;`,
-    `CREATE TRIGGER ${q(trigger.name)} ${trigger.timing} ${trigger.event} ON ${q(table)} FOR EACH ROW EXECUTE FUNCTION ${fn}();`,
-  ];
+  const name = trigger.function ?? `${trigger.name}_fn`;
+  const fn = q(name);
+  const out: string[] = [];
+  if (!created.has(name)) {
+    created.add(name);
+    out.push(`CREATE OR REPLACE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN\n  ${trigger.body}\n  RETURN ${ret};\nEND $$;`);
+  }
+  out.push(`CREATE TRIGGER ${q(trigger.name)} ${trigger.timing} ${trigger.event} ON ${q(table)} FOR EACH ROW EXECUTE FUNCTION ${fn}();`);
+  return out;
 }
 
 function dropTriggerSql(trigger: TriggerSnapshot, table: string): string[] {
-  return [
-    `DROP TRIGGER IF EXISTS ${q(trigger.name)} ON ${q(table)};`,
-    `DROP FUNCTION IF EXISTS ${q(`${trigger.name}_fn`)}();`,
-  ];
+  const out = [`DROP TRIGGER IF EXISTS ${q(trigger.name)} ON ${q(table)};`];
+  if (!trigger.function) out.push(`DROP FUNCTION IF EXISTS ${q(`${trigger.name}_fn`)}();`);
+  return out;
 }
 
 function columnChangeSql(change: TableChange, out: string[]): void {
@@ -128,6 +159,7 @@ function columnChangeSql(change: TableChange, out: string[]): void {
             : `${alter} ALTER COLUMN ${q(name)} DROP DEFAULT;`,
         );
       }
+      checkChangeSql(t, name, before.check, after.check, out);
     }
   }
 }
@@ -183,12 +215,13 @@ export function diffToSQL(diff: SchemaDiff, renames: Rename[] = []): string[] {
     }
   }
 
+  const created = new Set<string>();
   for (const table of diff.addedTables) {
-    for (const trg of Object.values(table.triggers)) out.push(...createTriggerSql(trg, table.name));
+    for (const trg of Object.values(table.triggers)) out.push(...createTriggerSql(trg, table.name, created));
   }
   for (const change of diff.changedTables) {
     for (const trg of change.triggers) {
-      if (trg.after) out.push(...createTriggerSql(trg.after, change.name));
+      if (trg.after) out.push(...createTriggerSql(trg.after, change.name, created));
     }
   }
 
@@ -201,7 +234,7 @@ export function diffToSQL(diff: SchemaDiff, renames: Rename[] = []): string[] {
     out.push(`DROP TABLE ${diff.droppedTables.map((t) => q(t.name)).join(', ')};`);
     for (const table of diff.droppedTables) {
       for (const trigger of Object.values(table.triggers)) {
-        out.push(`DROP FUNCTION IF EXISTS ${q(`${trigger.name}_fn`)}();`);
+        if (!trigger.function) out.push(`DROP FUNCTION IF EXISTS ${q(`${trigger.name}_fn`)}();`);
       }
     }
   }

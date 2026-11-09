@@ -8,6 +8,12 @@ export interface ColumnSnapshot {
   primaryKey?: true;
   identity?: true;
   default?: string;
+  check?: CheckSnapshot;
+}
+
+export interface CheckSnapshot {
+  name: string;
+  values: (string | number)[];
 }
 
 export interface IndexSnapshot {
@@ -23,6 +29,7 @@ export interface TriggerSnapshot {
   event: string;
   tableName: string;
   body: string;
+  function?: string;
 }
 
 export interface ForeignKeySnapshot {
@@ -95,6 +102,7 @@ export function serializeSchema(exports: Record<string, unknown>): SchemaSnapsho
       const info = pgTypeFromSchema(colSchema);
       const col: ColumnSnapshot = { name: colName, type: info.type, notNull: info.notNull };
       if (info.default !== undefined) col.default = info.default;
+      if (info.values) col.check = { name: `${table._name}_${colName}_check`, values: info.values };
       columns[colName] = col;
     }
 
@@ -118,7 +126,7 @@ export function serializeSchema(exports: Record<string, unknown>): SchemaSnapsho
 
     const indexes: Record<string, IndexSnapshot> = {};
     for (const idx of table._indexes) {
-      const snap: IndexSnapshot = { name: idx.name, columns: idx.columns, unique: idx.unique };
+      const snap: IndexSnapshot = { name: idx.name, columns: [...idx.columns], unique: idx.unique };
       if (idx.where !== undefined) snap.where = idx.where;
       indexes[idx.name] = snap;
     }
@@ -127,11 +135,11 @@ export function serializeSchema(exports: Record<string, unknown>): SchemaSnapsho
     for (const fk of (table._foreignKeys ?? []) as SchemaForeignKey[]) {
       const refOpts = { ...defaultOpts, ...((fk.references._options ?? {}) as TableOptions) };
       const refPk = refOpts.primaryKey ? refOpts.primaryKeyColumn : undefined;
-      const refColumns = fk.refColumns ?? (refPk ? [refPk] : []);
+      const refColumns = [...(fk.refColumns ?? (refPk ? [refPk] : []))];
       if (refColumns.length === 0) continue;
       const snap: ForeignKeySnapshot = {
         name: `${table._name}_${fk.columns.join('_')}_fkey`,
-        columns: fk.columns,
+        columns: [...fk.columns],
         refTable: fk.references._name,
         refColumns,
       };
@@ -150,6 +158,7 @@ export function serializeSchema(exports: Record<string, unknown>): SchemaSnapsho
         event: 'UPDATE',
         tableName: table._name,
         body: `NEW."${opts.updatedAtColumn}" = now();`,
+        function: `kyt_set_${opts.updatedAtColumn}`,
       };
     }
 

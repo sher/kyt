@@ -1,7 +1,7 @@
 import type { PgType } from '../src/schema.js';
 import type { SchemaSnapshot } from '../src/snapshot.js';
 
-const dataTypes: Record<PgType, string> = {
+const dataTypes: Record<Exclude<PgType, `numeric(${number},${number})`>, string> = {
   text: 'text',
   uuid: 'uuid',
   integer: 'integer',
@@ -21,7 +21,7 @@ export function expectedFrom(snapshot: SchemaSnapshot) {
       rows.push({
         table_name: table.name,
         column_name: col.name,
-        data_type: dataTypes[col.type],
+        data_type: col.type.startsWith('numeric(') ? 'numeric' : dataTypes[col.type as keyof typeof dataTypes],
         is_nullable: col.notNull ? 'NO' : 'YES',
       });
     }
