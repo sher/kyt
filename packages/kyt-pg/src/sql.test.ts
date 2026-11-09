@@ -373,13 +373,12 @@ describe('dropped tables', () => {
     ]);
   });
 
-  it('drops the trigger functions of dropped tables', () => {
+  it('drops the trigger functions of dropped tables, but keeps the shared one', () => {
     const Gone = defineTable('Gone', { x: v.string() });
     defineTrigger('Gone_audit', { timing: 'AFTER', event: 'INSERT', on: Gone, body: 'NULL;' });
     const prev = serializeSchema({ Gone });
-    expect(diffToSQL(diffSnapshots(prev, EMPTY_SNAPSHOT)).slice(-3)).toEqual([
+    expect(diffToSQL(diffSnapshots(prev, EMPTY_SNAPSHOT)).slice(-2)).toEqual([
       'DROP TABLE "Gone";',
-      'DROP FUNCTION IF EXISTS "Gone_updatedAt_trg_fn"();',
       'DROP FUNCTION IF EXISTS "Gone_audit_fn"();',
     ]);
   });
@@ -395,5 +394,107 @@ describe('output', () => {
 
   it('writes nothing for an empty diff', () => {
     expect(diffToSQL(diffSnapshots(EMPTY_SNAPSHOT, EMPTY_SNAPSHOT))).toEqual([]);
+  });
+});
+
+describe('shared updatedAt function', () => {
+  it('creates the function once for many tables', () => {
+    const A = defineTable('A', { x: v.string() });
+    const B = defineTable('B', { x: v.string() });
+    const sql = diffToSQL(diffSnapshots(EMPTY_SNAPSHOT, serializeSchema({ A, B })));
+    expect(sql.filter((s) => s.startsWith('CREATE OR REPLACE FUNCTION'))).toEqual([
+      'CREATE OR REPLACE FUNCTION "kyt_set_updatedAt"() RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN\n  NEW."updatedAt" = now();\n  RETURN NEW;\nEND $$;',
+    ]);
+    expect(sql.filter((s) => s.startsWith('CREATE TRIGGER'))).toEqual([
+      'CREATE TRIGGER "A_updatedAt_trg" BEFORE UPDATE ON "A" FOR EACH ROW EXECUTE FUNCTION "kyt_set_updatedAt"();',
+      'CREATE TRIGGER "B_updatedAt_trg" BEFORE UPDATE ON "B" FOR EACH ROW EXECUTE FUNCTION "kyt_set_updatedAt"();',
+    ]);
+  });
+
+  it('moves an old per-table trigger to the shared function', () => {
+    const A = defineTable('A', { x: v.string() });
+    const next = serializeSchema({ A });
+    const prev = structuredClone(next);
+    delete prev.tables.A.triggers.A_updatedAt_trg.function;
+    expect(diffToSQL(diffSnapshots(prev, next))).toEqual([
+      'DROP TRIGGER IF EXISTS "A_updatedAt_trg" ON "A";',
+      'DROP FUNCTION IF EXISTS "A_updatedAt_trg_fn"();',
+      'CREATE OR REPLACE FUNCTION "kyt_set_updatedAt"() RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN\n  NEW."updatedAt" = now();\n  RETURN NEW;\nEND $$;',
+      'CREATE TRIGGER "A_updatedAt_trg" BEFORE UPDATE ON "A" FOR EACH ROW EXECUTE FUNCTION "kyt_set_updatedAt"();',
+    ]);
+  });
+});
+
+describe('picklist checks', () => {
+  const roles = (values: string[], name = 'User_role_check') => col('role', { check: { name, values } });
+
+  it('writes the check in a new table', () => {
+    const next = snap(table('User', [idCol, roles(['admin', 'member'])]));
+    expect(run(EMPTY_SNAPSHOT, next)[0]).toContain(
+      `"role" text NOT NULL CONSTRAINT "User_role_check" CHECK ("role" IN ('admin', 'member'))`,
+    );
+  });
+
+  it('widens a check with no warning', () => {
+    const prev = snap(table('User', [idCol, roles(['admin'])]));
+    const next = snap(table('User', [idCol, roles(['admin', 'member'])]));
+    expect(run(prev, next)).toEqual([
+      'ALTER TABLE "User" DROP CONSTRAINT IF EXISTS "User_role_check";',
+      `ALTER TABLE "User" ADD CONSTRAINT "User_role_check" CHECK ("role" IN ('admin', 'member'));`,
+    ]);
+  });
+
+  it('warns when a value is removed', () => {
+    const prev = snap(table('User', [idCol, roles(['admin', 'member'])]));
+    const next = snap(table('User', [idCol, roles(['admin'])]));
+    expect(run(prev, next)).toEqual([
+      'ALTER TABLE "User" DROP CONSTRAINT IF EXISTS "User_role_check";',
+      `-- WARNING: limits "User"."role" to 'admin'. This fails if any row holds another value. Change those rows first.`,
+      `ALTER TABLE "User" ADD CONSTRAINT "User_role_check" CHECK ("role" IN ('admin'));`,
+    ]);
+  });
+
+  it('warns when a text column becomes a picklist', () => {
+    const prev = snap(table('User', [idCol, col('role')]));
+    const next = snap(table('User', [idCol, roles(['admin'])]));
+    expect(run(prev, next)).toEqual([
+      `-- WARNING: limits "User"."role" to 'admin'. This fails if any row holds another value. Change those rows first.`,
+      `ALTER TABLE "User" ADD CONSTRAINT "User_role_check" CHECK ("role" IN ('admin'));`,
+    ]);
+  });
+
+  it('drops the check when the column becomes plain text', () => {
+    const prev = snap(table('User', [idCol, roles(['admin'])]));
+    const next = snap(table('User', [idCol, col('role')]));
+    expect(run(prev, next)).toEqual(['ALTER TABLE "User" DROP CONSTRAINT IF EXISTS "User_role_check";']);
+  });
+
+  it('renames the check with the column', () => {
+    const prev = snap(table('User', [idCol, roles(['admin'])]));
+    const next = snap(table('User', [idCol, col('kind', { check: { name: 'User_kind_check', values: ['admin'] } })]));
+    expect(run(prev, next, [{ kind: 'column', table: 'User', from: 'role', to: 'kind' }])).toEqual([
+      'ALTER TABLE "User" RENAME COLUMN "role" TO "kind";',
+      'ALTER TABLE "User" RENAME CONSTRAINT "User_role_check" TO "User_kind_check";',
+    ]);
+  });
+
+  it('renames the check with the table', () => {
+    const prev = snap(table('User', [idCol, roles(['admin'])]));
+    const next = snap(table('Member', [idCol, roles(['admin'], 'Member_role_check')]));
+    expect(run(prev, next, [{ kind: 'table', from: 'User', to: 'Member' }])).toEqual([
+      'ALTER TABLE "User" RENAME TO "Member";',
+      'ALTER TABLE "Member" RENAME CONSTRAINT "User_role_check" TO "Member_role_check";',
+    ]);
+  });
+});
+
+describe('numeric precision', () => {
+  it('changes plain numeric to a set precision with a cast warning', () => {
+    const prev = snap(table('Item', [idCol, col('price', { type: 'numeric' })]));
+    const next = snap(table('Item', [idCol, col('price', { type: 'numeric(18,2)' })]));
+    expect(run(prev, next)).toEqual([
+      '-- WARNING: changes "Item"."price" from numeric to numeric(18,2). This fails if any row cannot be cast. Change the USING part if needed.',
+      'ALTER TABLE "Item" ALTER COLUMN "price" TYPE numeric(18,2) USING "price"::numeric(18,2);',
+    ]);
   });
 });

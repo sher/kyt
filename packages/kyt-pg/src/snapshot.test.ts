@@ -27,6 +27,15 @@ describe('serializeSchema', () => {
     const User = defineTable('User', { email: v.string() });
     expect(serializeSchema({ User }).tables.User.triggers.User_updatedAt_trg).toEqual({
       name: 'User_updatedAt_trg', timing: 'BEFORE', event: 'UPDATE', tableName: 'User', body: 'NEW."updatedAt" = now();',
+      function: 'kyt_set_updatedAt',
+    });
+  });
+
+  it('stores picklist values as a named check', () => {
+    const User = defineTable('User', { role: v.picklist(['admin', 'member']) });
+    expect(serializeSchema({ User }).tables.User.columns.role.check).toEqual({
+      name: 'User_role_check',
+      values: ['admin', 'member'],
     });
   });
 

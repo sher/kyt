@@ -98,6 +98,7 @@ A virtual table is a typed view. It adds no table and needs no migration. It is 
 | `v.string()` | `text` |
 | `v.pipe(v.string(), v.uuid())` | `uuid` |
 | `v.pipe(v.string(), v.decimal())` | `numeric` |
+| `v.pipe(v.string(), v.decimal(), numeric(18, 2))` | `numeric(18,2)` |
 | `v.pipe(v.string(), v.isoDate())` | `date` |
 | `v.number()` | `double precision` |
 | `v.pipe(v.number(), v.integer())` | `integer` |
@@ -105,10 +106,14 @@ A virtual table is a typed view. It adds no table and needs no migration. It is 
 | `v.boolean()` | `boolean` |
 | `v.object(...)`, `v.array(...)` | `jsonb` |
 | `v.date()` | `timestamptz` |
-| `v.picklist([...])` | `text` |
+| `v.picklist([...])` | `text` with a `CHECK` on the values |
 | `v.nullable(x)` | the type of `x`, without `NOT NULL` |
 
 Every other column is `NOT NULL`. Use `withDefault(schema, value)` to set a default. Use `sqlDefault('now()')` for a SQL default.
+
+`numeric(precision, scale)` comes from `kyt-pg`. Put it last in the pipe, after `v.decimal()`. Postgres then rounds each value to `scale` places. The scale defaults to 0.
+
+A picklist check is named `<Table>_<column>_check`. Adding a value to the list rewrites the check with no warning. Removing a value writes the `limits` warning below.
 
 ## Built-in columns
 
@@ -116,7 +121,7 @@ Each table gets three columns. You do not define them.
 
 - `id`, the primary key.
 - `createdAt`, set on insert.
-- `updatedAt`, set on insert and kept current by a trigger.
+- `updatedAt`, set on insert and kept current by a trigger. All tables share one trigger function, `kyt_set_updatedAt`.
 
 Set the `id` type for each table with the `id` option. The default is `bigint`.
 
@@ -195,13 +200,14 @@ The command compares `schema.ts` with `schema.json` and writes the change as SQL
 
 The file has no `BEGIN` or `COMMIT`. The runner runs each file and its `KytMigration` row in one transaction.
 
-Some changes can break on a table that has rows. kyt-pg writes a `-- WARNING:` line above the SQL for those. There are six:
+Some changes can break on a table that has rows. kyt-pg writes a `-- WARNING:` line above the SQL for those. There are seven:
 
 - `-- WARNING: adds NOT NULL column "<Table>"."<column>" with no default. This fails if the table has rows. Add a default, or add the column as nullable and fill it first.`
 - `-- WARNING: drops column "<Table>"."<column>" and its data. If this is a rename, run schema:diff again and answer yes.`
 - `-- WARNING: changes "<Table>"."<column>" from <old type> to <new type>. This fails if any row cannot be cast. Change the USING part if needed.`
 - `-- WARNING: makes "<Table>"."<column>" NOT NULL. This fails if any row holds NULL. Fill those rows first.`
 - `-- WARNING: the primary key of "<Table>" changed. kyt-pg does not write this change. Write it by hand.`
+- `-- WARNING: limits "<Table>"."<column>" to <values>. This fails if any row holds another value. Change those rows first.`
 - `-- WARNING: drops table "<Table>" and all its rows. Keep this only if the data is not needed.`
 
 Fix each warning in the file before you run it.
@@ -294,7 +300,7 @@ From `kyt-pg`:
 - `defineIndex(table, columns, options?)`
 - `defineTrigger(name, options)`
 - `defineVirtualTable(name, source, columns, options?)`
-- `withDefault(schema, value)`, `sqlDefault(sql)`
+- `withDefault(schema, value)`, `sqlDefault(sql)`, `numeric(precision, scale?)`
 - `createQueryBuilder<DB>(virtualTables?)`
 - `queryAll`, `queryFirst`, `queryRun`, `queryBatch`
 - `serializeSchema`, `diffSnapshots`, `findRenameCandidates`, `applyRenames`, `diffToSQL`

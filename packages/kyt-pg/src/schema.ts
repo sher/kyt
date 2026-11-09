@@ -1,4 +1,4 @@
-import type * as v from 'valibot';
+import * as v from 'valibot';
 import type { ColumnType, Generated, GeneratedAlways } from 'kysely';
 import type { VirtualTable } from './virtual-table.js';
 
@@ -12,6 +12,7 @@ export type PgType =
   | 'timestamptz'
   | 'date'
   | 'numeric'
+  | `numeric(${number},${number})`
   | 'double precision';
 
 export type IdType = 'bigint' | 'integer' | 'uuid';
@@ -29,15 +30,15 @@ export interface TableOptions {
 export interface SchemaIndex {
   readonly _tableName: string;
   readonly name: string;
-  readonly columns: string[];
+  readonly columns: readonly string[];
   readonly unique: boolean;
   readonly where?: string;
 }
 
 export interface SchemaForeignKey {
-  readonly columns: string[];
+  readonly columns: readonly string[];
   readonly references: SchemaTable<any, any>;
-  readonly refColumns?: string[];
+  readonly refColumns?: readonly string[];
   readonly onDelete?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
   readonly onUpdate?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
   readonly deferrable?: 'immediate' | 'deferred';
@@ -187,6 +188,30 @@ export interface ColumnTypeInfo {
   type: PgType;
   notNull: boolean;
   default?: string;
+  values?: (string | number)[];
+}
+
+type NumericMetadata = {
+  readonly kytPgNumeric: { readonly precision: number; readonly scale: number };
+};
+
+export function numeric<TInput extends string>(
+  precision: number,
+  scale = 0,
+): v.MetadataAction<TInput, NumericMetadata> {
+  if (!Number.isInteger(precision) || precision < 1 || precision > 1000) {
+    throw new Error(`kyt-pg: numeric precision must be a whole number from 1 to 1000, got ${precision}`);
+  }
+  if (!Number.isInteger(scale) || scale < 0 || scale > precision) {
+    throw new Error(`kyt-pg: numeric scale must be a whole number from 0 to ${precision}, got ${scale}`);
+  }
+  return v.metadata<TInput, NumericMetadata>({ kytPgNumeric: { precision, scale } });
+}
+
+function numericMetadata(inner: any): NumericMetadata['kytPgNumeric'] | undefined {
+  if (!Array.isArray(inner.pipe)) return undefined;
+  const item = inner.pipe.find((p: any) => p.kind === 'metadata' && p.type === 'metadata' && p.metadata?.kytPgNumeric);
+  return item?.metadata.kytPgNumeric;
 }
 
 function quote(text: string): string {
@@ -244,9 +269,14 @@ export function pgTypeFromSchema(schema: AnyColSchema): ColumnTypeInfo {
   }
 
   const notNull = !nullable;
+  const precision = inner ? numericMetadata(inner) : undefined;
+  if (precision && !(inner.type === 'string' && hasPipeAction(inner, 'decimal'))) {
+    throw new ColumnError('numeric() needs v.pipe(v.string(), v.decimal(), numeric(...))');
+  }
   switch (inner?.type) {
     case 'string':
       if (hasPipeAction(inner, 'uuid')) return { type: 'uuid', notNull };
+      if (precision) return { type: `numeric(${precision.precision},${precision.scale})`, notNull };
       if (hasPipeAction(inner, 'decimal')) return { type: 'numeric', notNull };
       if (hasPipeAction(inner, 'iso_date')) return { type: 'date', notNull };
       return { type: 'text', notNull };
@@ -262,7 +292,7 @@ export function pgTypeFromSchema(schema: AnyColSchema): ColumnTypeInfo {
     case 'date':
       return { type: 'timestamptz', notNull };
     case 'picklist':
-      return { type: 'text', notNull };
+      return { type: 'text', notNull, values: [...inner.options] };
     default:
       throw new ColumnError(`unsupported Valibot type "${inner?.type ?? 'unknown'}"`);
   }
@@ -280,7 +310,7 @@ export function defineTable<
 >(
   name: string,
   columns: Cols,
-  options?: O & { foreignKeys?: Array<Omit<SchemaForeignKey, 'columns'> & { columns: (keyof Cols & string)[] }> },
+  options?: O & { foreignKeys?: Array<Omit<SchemaForeignKey, 'columns'> & { columns: readonly (keyof Cols & string)[] }> },
 ): SchemaTable<Cols, O> {
   for (const [column, schema] of Object.entries(columns)) {
     try {
@@ -305,7 +335,7 @@ export function defineTable<
 
 export function defineIndex<Cols extends Record<string, AnyColSchema>>(
   table: SchemaTable<Cols, any>,
-  columns: (keyof Cols & string)[],
+  columns: readonly (keyof Cols & string)[],
   options?: { unique?: boolean; name?: string; where?: string },
 ): SchemaIndex {
   const unique = options?.unique ?? false;
@@ -315,7 +345,7 @@ export function defineIndex<Cols extends Record<string, AnyColSchema>>(
   const index: SchemaIndex = {
     _tableName: table._name,
     name,
-    columns: columns as string[],
+    columns: [...columns],
     unique,
     where: options?.where,
   };

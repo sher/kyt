@@ -5,6 +5,7 @@ import {
   defineTable,
   defineIndex,
   defineTrigger,
+  numeric,
   pgTypeFromSchema,
   sqlDefault,
   withDefault,
@@ -45,6 +46,27 @@ describe('pgTypeFromSchema', () => {
     expect(pgTypeFromSchema(withDefault(v.date(), new Date('2026-01-02T03:04:05.000Z'))).default).toBe(
       "'2026-01-02T03:04:05.000Z'::timestamptz",
     );
+  });
+
+  it('maps numeric() to a set precision and scale', () => {
+    const money = v.pipe(v.string(), v.decimal(), numeric(18, 2));
+    expect(pgTypeFromSchema(money).type).toBe('numeric(18,2)');
+    expect(pgTypeFromSchema(v.nullable(money))).toEqual({ type: 'numeric(18,2)', notNull: false });
+    expect(pgTypeFromSchema(withDefault(money, '0')).type).toBe('numeric(18,2)');
+    expect(pgTypeFromSchema(v.pipe(v.string(), v.decimal(), numeric(10))).type).toBe('numeric(10,0)');
+    expect(v.parse(money, '12.50')).toBe('12.50');
+  });
+
+  it('refuses a bad numeric()', () => {
+    expect(() => numeric(0)).toThrow('kyt-pg: numeric precision must be a whole number from 1 to 1000, got 0');
+    expect(() => numeric(5, 6)).toThrow('kyt-pg: numeric scale must be a whole number from 0 to 5, got 6');
+    expect(() => pgTypeFromSchema(v.pipe(v.string(), numeric(18, 2)))).toThrow(
+      'kyt-pg: numeric() needs v.pipe(v.string(), v.decimal(), numeric(...))',
+    );
+  });
+
+  it('keeps picklist values', () => {
+    expect(pgTypeFromSchema(v.picklist(['a', 'b'])).values).toEqual(['a', 'b']);
   });
 
   it('throws for an unsupported type', () => {
@@ -99,6 +121,14 @@ describe('InferDB', () => {
 });
 
 describe('defineIndex', () => {
+  it('takes readonly column lists', () => {
+    const Tag = defineTable('Tag', { a: v.string(), b: v.string() });
+    const columns = ['a', 'b'] as const;
+    expect(defineIndex(Tag, columns).columns).toEqual(['a', 'b']);
+    const key = { columns: ['a'] as const, references: Tag, refColumns: ['a'] as const };
+    expect(defineTable('Ref', { a: v.string() }, { foreignKeys: [key] })._foreignKeys[0].columns).toEqual(['a']);
+  });
+
   it('adds an index with a generated name', () => {
     const User = defineTable('IdxUser', { email: v.string() });
     const idx = defineIndex(User, ['email'], { unique: true });

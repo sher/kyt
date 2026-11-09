@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 (2026-11-09)
+
+- Add `numeric(precision, scale)` for `v.decimal()` columns. It writes `numeric(18,2)` instead of `numeric`.
+- Write a named `CHECK` for each `v.picklist` column, so Postgres refuses other values. Removing a value writes a new `limits` warning. Renaming the column or table renames the check.
+- All tables share one `updatedAt` trigger function, `kyt_set_updatedAt`. The next `schema:diff` moves each old per-table function to it.
+- `defineIndex` and foreign key `columns` and `refColumns` take readonly arrays, so `as const` lists work.
+
 ## 0.1.3 (2026-11-01)
 
 - Map `v.pipe(v.string(), v.decimal())` to `numeric` and `v.pipe(v.string(), v.isoDate())` to `date`. Both were `text` before.
