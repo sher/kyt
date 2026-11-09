@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1 (2026-11-09)
+
+- `schema.json`, migrations and `schema.sql` list tables in the order `schema.ts` defines them. They were in alphabetical order, because JavaScript sorts module exports by name.
+
 ## 0.2.0 (2026-11-09)
 
 - Add `numeric(precision, scale)` for `v.decimal()` columns. It writes `numeric(18,2)` instead of `numeric`.

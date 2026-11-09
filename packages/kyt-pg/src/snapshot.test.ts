@@ -31,6 +31,12 @@ describe('serializeSchema', () => {
     });
   });
 
+  it('keeps tables in the order they were defined, not the export order', () => {
+    const Zone = defineTable('Zone', { label: v.string() });
+    const Area = defineTable('Area', { zoneId: v.bigint() });
+    expect(Object.keys(serializeSchema({ Area, Zone }).tables)).toEqual(['Zone', 'Area']);
+  });
+
   it('stores picklist values as a named check', () => {
     const User = defineTable('User', { role: v.picklist(['admin', 'member']) });
     expect(serializeSchema({ User }).tables.User.columns.role.check).toEqual({
