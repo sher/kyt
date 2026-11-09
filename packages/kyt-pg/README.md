@@ -87,7 +87,7 @@ export type DB = InferDB<{
 export const db = createQueryBuilder<DB>([PublishedPost]);
 ```
 
-Foreign keys are added after all tables are created. The order of tables in `schema.ts` does not matter.
+Foreign keys are added after all tables are created, so any order works. The SQL lists tables in the order `schema.ts` defines them.
 
 A virtual table is a typed view. It adds no table and needs no migration. It is read-only.
 

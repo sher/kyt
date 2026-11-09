@@ -86,10 +86,11 @@ function idColumn(name: string, id: 'bigint' | 'integer' | 'uuid'): ColumnSnapsh
 export function serializeSchema(exports: Record<string, unknown>): SchemaSnapshot {
   const tables: Record<string, TableSnapshot> = {};
 
-  for (const val of Object.values(exports)) {
-    if (!isSchemaTable(val)) continue;
+  const defined = Object.values(exports)
+    .filter(isSchemaTable)
+    .sort((a, b) => a._order - b._order);
 
-    const table = val;
+  for (const table of defined) {
     const opts = { ...defaultOpts, ...((table._options ?? {}) as TableOptions) };
 
     const columns: Record<string, ColumnSnapshot> = {};

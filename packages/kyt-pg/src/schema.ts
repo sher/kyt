@@ -179,6 +179,7 @@ export interface SchemaTable<
   readonly _indexes: SchemaIndex[];
   readonly _triggers: SchemaTrigger[];
   readonly _foreignKeys: SchemaForeignKey[];
+  readonly _order: number;
   readonly _schemaTable: true;
   $inferSelect: InferSelect<Cols, O>;
   $inferInsert: InferInsert<Cols, O>;
@@ -299,6 +300,7 @@ export function pgTypeFromSchema(schema: AnyColSchema): ColumnTypeInfo {
 }
 
 const tableRegistry = new Map<string, SchemaTable<any, any>>();
+let tableOrder = 0;
 
 export function getTableRegistry(): ReadonlyMap<string, SchemaTable<any, any>> {
   return tableRegistry;
@@ -327,6 +329,7 @@ export function defineTable<
     _indexes: [],
     _triggers: [],
     _foreignKeys: [...(options?.foreignKeys ?? [])],
+    _order: tableOrder++,
     _schemaTable: true,
   } as unknown as SchemaTable<Cols, O>;
   tableRegistry.set(name, table);

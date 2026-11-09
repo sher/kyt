@@ -1,6 +1,6 @@
 {
   "name": "kyt-pg",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Opinionated Postgres + Kysely toolkit",
   "type": "module",
   "main": "dist/index.js",
