@@ -26,5 +26,5 @@ if [ "$dry_run" = "true" ]; then
   exit 0
 fi
 
-(cd "$dir" && npm publish)
+(cd "$dir" && npm publish --loglevel verbose)
 gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --notes-file "$notes"
