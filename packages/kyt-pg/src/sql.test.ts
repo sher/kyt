@@ -5,7 +5,7 @@ import { serializeSchema, EMPTY_SNAPSHOT } from './snapshot.js';
 import type { ColumnSnapshot, SchemaSnapshot, TableSnapshot } from './snapshot.js';
 import { diffSnapshots, applyRenames } from './diff.js';
 import type { Rename } from './diff.js';
-import { diffToSQL } from './sql.js';
+import { diffToSQL, diffToValidateSQL } from './sql.js';
 
 function table(name: string, columns: ColumnSnapshot[], extra: Partial<TableSnapshot> = {}): TableSnapshot {
   return {
@@ -435,32 +435,48 @@ describe('picklist checks', () => {
     );
   });
 
-  it('widens a check with no warning', () => {
+  const validate = (prev: SchemaSnapshot, next: SchemaSnapshot) => diffToValidateSQL(diffSnapshots(prev, next));
+
+  it('adds a widened check as NOT VALID and validates it with no warning', () => {
     const prev = snap(table('User', [idCol, roles(['admin'])]));
     const next = snap(table('User', [idCol, roles(['admin', 'member'])]));
     expect(run(prev, next)).toEqual([
       'ALTER TABLE "User" DROP CONSTRAINT IF EXISTS "User_role_check";',
-      `ALTER TABLE "User" ADD CONSTRAINT "User_role_check" CHECK ("role" IN ('admin', 'member'));`,
+      `ALTER TABLE "User" ADD CONSTRAINT "User_role_check" CHECK ("role" IN ('admin', 'member')) NOT VALID;`,
     ]);
+    expect(validate(prev, next)).toEqual(['ALTER TABLE "User" VALIDATE CONSTRAINT "User_role_check";']);
   });
 
-  it('warns when a value is removed', () => {
+  it('warns in the validate step when a value is removed', () => {
     const prev = snap(table('User', [idCol, roles(['admin', 'member'])]));
     const next = snap(table('User', [idCol, roles(['admin'])]));
     expect(run(prev, next)).toEqual([
       'ALTER TABLE "User" DROP CONSTRAINT IF EXISTS "User_role_check";',
+      `ALTER TABLE "User" ADD CONSTRAINT "User_role_check" CHECK ("role" IN ('admin')) NOT VALID;`,
+    ]);
+    expect(validate(prev, next)).toEqual([
       `-- WARNING: limits "User"."role" to 'admin'. This fails if any row holds another value. Change those rows first.`,
-      `ALTER TABLE "User" ADD CONSTRAINT "User_role_check" CHECK ("role" IN ('admin'));`,
+      'ALTER TABLE "User" VALIDATE CONSTRAINT "User_role_check";',
     ]);
   });
 
-  it('warns when a text column becomes a picklist', () => {
+  it('warns in the validate step when a text column becomes a picklist', () => {
     const prev = snap(table('User', [idCol, col('role')]));
     const next = snap(table('User', [idCol, roles(['admin'])]));
     expect(run(prev, next)).toEqual([
-      `-- WARNING: limits "User"."role" to 'admin'. This fails if any row holds another value. Change those rows first.`,
-      `ALTER TABLE "User" ADD CONSTRAINT "User_role_check" CHECK ("role" IN ('admin'));`,
+      `ALTER TABLE "User" ADD CONSTRAINT "User_role_check" CHECK ("role" IN ('admin')) NOT VALID;`,
     ]);
+    expect(validate(prev, next)).toEqual([
+      `-- WARNING: limits "User"."role" to 'admin'. This fails if any row holds another value. Change those rows first.`,
+      'ALTER TABLE "User" VALIDATE CONSTRAINT "User_role_check";',
+    ]);
+  });
+
+  it('needs no validate step for new tables, new columns, drops or renames', () => {
+    const prev = snap(table('User', [idCol, roles(['admin'])]));
+    expect(validate(EMPTY_SNAPSHOT, prev)).toEqual([]);
+    expect(validate(prev, snap(table('User', [idCol, col('role')])))).toEqual([]);
+    expect(validate(snap(table('User', [idCol])), prev)).toEqual([]);
   });
 
   it('drops the check when the column becomes plain text', () => {

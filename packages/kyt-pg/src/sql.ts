@@ -40,14 +40,25 @@ function checkChangeSql(table: string, column: string, before: CheckSnapshot | u
     return;
   }
   if (before) out.push(`${alter} DROP CONSTRAINT IF EXISTS ${q(before.name)};`);
-  if (!after) return;
-  const removed = before ? before.values.filter((value) => !after.values.includes(value)) : undefined;
-  if (!removed || removed.length > 0) {
-    out.push(
-      `-- WARNING: limits "${table}"."${column}" to ${after.values.map(literal).join(', ')}. This fails if any row holds another value. Change those rows first.`,
-    );
+  if (after) out.push(`${alter} ADD CONSTRAINT ${q(after.name)} ${checkSql(column, after)} NOT VALID;`);
+}
+
+export function diffToValidateSQL(diff: SchemaDiff): string[] {
+  const out: string[] = [];
+  for (const change of diff.changedTables) {
+    for (const { name, before, after } of change.columns) {
+      if (!before || !after?.check) continue;
+      if (before.check && JSON.stringify(before.check.values) === JSON.stringify(after.check.values)) continue;
+      const removed = before.check ? before.check.values.filter((value) => !after.check!.values.includes(value)) : undefined;
+      if (!removed || removed.length > 0) {
+        out.push(
+          `-- WARNING: limits "${change.name}"."${name}" to ${after.check.values.map(literal).join(', ')}. This fails if any row holds another value. Change those rows first.`,
+        );
+      }
+      out.push(`ALTER TABLE ${q(change.name)} VALIDATE CONSTRAINT ${q(after.check.name)};`);
+    }
   }
-  out.push(`${alter} ADD CONSTRAINT ${q(after.name)} ${checkSql(column, after)};`);
+  return out;
 }
 
 function createTableSql(table: TableSnapshot): string {

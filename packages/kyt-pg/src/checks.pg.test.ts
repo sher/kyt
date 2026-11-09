@@ -7,7 +7,7 @@ import { freshDb } from '../test/pg.js';
 import { defineTable, numeric } from './schema.js';
 import { serializeSchema, EMPTY_SNAPSHOT } from './snapshot.js';
 import { diffSnapshots } from './diff.js';
-import { diffToSQL } from './sql.js';
+import { diffToSQL, diffToValidateSQL } from './sql.js';
 import { migrate } from './migrate.js';
 
 let db: Awaited<ReturnType<typeof freshDb>>;
@@ -50,4 +50,35 @@ it('keeps one shared updatedAt function for all tables', async () => {
   const [before] = await db.sql`insert into "Box" (label) values ('a') returning "updatedAt"`;
   const [after] = await db.sql`update "Box" set label = 'b' returning "updatedAt"`;
   expect(after.updatedAt.getTime()).toBeGreaterThanOrEqual(before.updatedAt.getTime());
+});
+
+it('adds a narrowed check as NOT VALID, then the validate file finds the old row', async () => {
+  const before = defineTable('Tag', { kind: v.picklist(['a', 'b']) });
+  const prev = serializeSchema({ Tag: before });
+  const tagDir = mkdtempSync(join(tmpdir(), 'kyt-pg-validate-'));
+  const tagDb = await freshDb();
+  try {
+    writeFileSync(join(tagDir, '0001.sql'), diffToSQL(diffSnapshots(EMPTY_SNAPSHOT, prev)).join('\n'));
+    await migrate(tagDb.sql, { dir: tagDir, log: () => {} });
+    await tagDb.sql`insert into "Tag" (kind) values ('b')`;
+
+    const next = structuredClone(prev);
+    next.tables.Tag.columns.kind.check!.values = ['a'];
+    const diff = diffSnapshots(prev, next);
+    writeFileSync(join(tagDir, '0002.sql'), diffToSQL(diff).join('\n'));
+    writeFileSync(join(tagDir, '0003.sql'), diffToValidateSQL(diff).join('\n'));
+
+    await expect(migrate(tagDb.sql, { dir: tagDir, log: () => {} })).rejects.toThrow('Tag_kind_check');
+    const [check] = await tagDb.sql`select convalidated from pg_constraint where conname = 'Tag_kind_check'`;
+    expect(check.convalidated).toBe(false);
+    await expect(tagDb.sql`insert into "Tag" (kind) values ('b')`).rejects.toThrow('Tag_kind_check');
+
+    await tagDb.sql`update "Tag" set kind = 'a'`;
+    expect((await migrate(tagDb.sql, { dir: tagDir, log: () => {} })).applied).toEqual(['0003.sql']);
+    const [valid] = await tagDb.sql`select convalidated from pg_constraint where conname = 'Tag_kind_check'`;
+    expect(valid.convalidated).toBe(true);
+  } finally {
+    await tagDb.close();
+    rmSync(tagDir, { recursive: true, force: true });
+  }
 });

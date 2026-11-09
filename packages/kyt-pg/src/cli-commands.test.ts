@@ -79,6 +79,39 @@ describe('cli commands', () => {
     expect(logs.join('\n')).toContain('Next: review the file, then run your migration job.');
   });
 
+  it('writes a separate validate file when a check is added to an existing table', async () => {
+    writeSchema('email');
+    await cmdSchemaDiff(io, { name: 'createUser', renames: [], noRename: false });
+    writeFileSync(
+      join(cwd, 'db/schema2.ts'),
+      `import { defineTable } from '${INDEX}';
+import * as v from 'valibot';
+export const User = defineTable('User', { email: v.string(), role: v.nullable(v.picklist(['admin'])) });
+`,
+    );
+    writeFileSync(
+      join(cwd, 'db/schema3.ts'),
+      `import { defineTable } from '${INDEX}';
+import * as v from 'valibot';
+export const User = defineTable('User', { email: v.string(), role: v.nullable(v.picklist(['admin', 'member'])) });
+`,
+    );
+    await cmdSchemaDiff(io, { name: 'addRole', schema: 'db/schema2.ts', renames: [], noRename: false });
+    expect(readdirSync(join(cwd, 'db/migrations'))).toEqual(['0001_create_user.sql', '0002_add_role.sql']);
+    expect(await cmdSchemaDiff(io, { name: 'widenRole', schema: 'db/schema3.ts', renames: [], noRename: false })).toBe(0);
+    expect(readdirSync(join(cwd, 'db/migrations'))).toEqual([
+      '0001_create_user.sql',
+      '0002_add_role.sql',
+      '0003_widen_role.sql',
+      '0004_widen_role_validate.sql',
+    ]);
+    expect(read('db/migrations/0003_widen_role.sql')).toContain('NOT VALID;');
+    expect(read('db/migrations/0004_widen_role_validate.sql')).toContain(
+      'ALTER TABLE "User" VALIDATE CONSTRAINT "User_role_check";',
+    );
+    expect(logs).toContain('Created: db/migrations/0004_widen_role_validate.sql');
+  });
+
   async function setupV1() {
     writeSchema('name');
     await cmdSchemaDiff(io, { name: 'createUser', renames: [], noRename: false });
