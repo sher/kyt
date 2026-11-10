@@ -44,6 +44,11 @@ export interface SchemaForeignKey {
   readonly deferrable?: 'immediate' | 'deferred';
 }
 
+export interface SchemaCheck {
+  readonly name: string;
+  readonly sql: string;
+}
+
 export interface SchemaTrigger {
   readonly name: string;
   readonly timing: 'BEFORE' | 'AFTER';
@@ -179,6 +184,7 @@ export interface SchemaTable<
   readonly _indexes: SchemaIndex[];
   readonly _triggers: SchemaTrigger[];
   readonly _foreignKeys: SchemaForeignKey[];
+  readonly _checks: SchemaCheck[];
   readonly _order: number;
   readonly _schemaTable: true;
   $inferSelect: InferSelect<Cols, O>;
@@ -329,6 +335,7 @@ export function defineTable<
     _indexes: [],
     _triggers: [],
     _foreignKeys: [...(options?.foreignKeys ?? [])],
+    _checks: [],
     _order: tableOrder++,
     _schemaTable: true,
   } as unknown as SchemaTable<Cols, O>;
@@ -336,9 +343,9 @@ export function defineTable<
   return table;
 }
 
-export function defineIndex<Cols extends Record<string, AnyColSchema>>(
-  table: SchemaTable<Cols, any>,
-  columns: readonly (keyof Cols & string)[],
+export function defineIndex<Cols extends Record<string, AnyColSchema>, O extends TableOptions>(
+  table: SchemaTable<Cols, O>,
+  columns: readonly (keyof InferSelect<Cols, O> & string)[],
   options?: { unique?: boolean; name?: string; where?: string },
 ): SchemaIndex {
   const unique = options?.unique ?? false;
@@ -355,6 +362,20 @@ export function defineIndex<Cols extends Record<string, AnyColSchema>>(
 
   (table._indexes as SchemaIndex[]).push(index);
   return index;
+}
+
+export function defineForeignKey<Cols extends Record<string, AnyColSchema>, O extends TableOptions>(
+  table: SchemaTable<Cols, O>,
+  foreignKey: Omit<SchemaForeignKey, 'columns'> & { columns: readonly (keyof Cols & string)[] },
+): SchemaForeignKey {
+  (table._foreignKeys as SchemaForeignKey[]).push(foreignKey);
+  return foreignKey;
+}
+
+export function defineCheck(table: SchemaTable<any, any>, name: string, sql: string): SchemaCheck {
+  const check: SchemaCheck = { name: `${table._name}_${name}_check`, sql };
+  (table._checks as SchemaCheck[]).push(check);
+  return check;
 }
 
 export function defineTrigger(

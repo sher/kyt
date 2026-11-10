@@ -1,4 +1,4 @@
-import type { PgType, SchemaForeignKey, SchemaTable, TableOptions } from './schema.js';
+import type { PgType, SchemaCheck, SchemaForeignKey, SchemaTable, TableOptions } from './schema.js';
 import { pgTypeFromSchema } from './schema.js';
 
 export interface ColumnSnapshot {
@@ -14,6 +14,11 @@ export interface ColumnSnapshot {
 export interface CheckSnapshot {
   name: string;
   values: (string | number)[];
+}
+
+export interface TableCheckSnapshot {
+  name: string;
+  sql: string;
 }
 
 export interface IndexSnapshot {
@@ -48,6 +53,7 @@ export interface TableSnapshot {
   indexes: Record<string, IndexSnapshot>;
   triggers: Record<string, TriggerSnapshot>;
   foreignKeys: Record<string, ForeignKeySnapshot>;
+  checks?: Record<string, TableCheckSnapshot>;
 }
 
 export interface SchemaSnapshot {
@@ -173,7 +179,16 @@ export function serializeSchema(exports: Record<string, unknown>): SchemaSnapsho
       };
     }
 
-    tables[table._name] = { name: table._name, columns, indexes, triggers, foreignKeys };
+    const checks: Record<string, TableCheckSnapshot> = {};
+    const columnChecks = new Set(Object.values(columns).flatMap((c) => (c.check ? [c.check.name] : [])));
+    for (const check of (table._checks ?? []) as SchemaCheck[]) {
+      if (checks[check.name] || columnChecks.has(check.name)) {
+        throw new Error(`kyt-pg: table "${table._name}" has two checks named "${check.name}"`);
+      }
+      checks[check.name] = { name: check.name, sql: check.sql };
+    }
+
+    tables[table._name] = { name: table._name, columns, indexes, triggers, foreignKeys, checks };
   }
 
   return { version: 1, dialect: 'postgres', tables };

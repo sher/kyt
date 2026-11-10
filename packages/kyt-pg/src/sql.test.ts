@@ -514,3 +514,52 @@ describe('numeric precision', () => {
     ]);
   });
 });
+
+describe('table checks', () => {
+  const positive = { name: 'Item_positive_check', sql: '"qty" >= 0' };
+  const base = (checks: TableSnapshot['checks'] = {}) => table('Item', [idCol, col('qty', { type: 'integer' })], { checks });
+
+  it('writes the check inside CREATE TABLE', () => {
+    const sql = run(EMPTY_SNAPSHOT, snap(base({ [positive.name]: positive })));
+    expect(sql[0]).toContain('CONSTRAINT "Item_positive_check" CHECK ("qty" >= 0)');
+  });
+
+  it('adds a check as NOT VALID and validates it in a second file', () => {
+    const diff = diffSnapshots(snap(base()), snap(base({ [positive.name]: positive })));
+    expect(diffToSQL(diff)).toEqual(['ALTER TABLE "Item" ADD CONSTRAINT "Item_positive_check" CHECK ("qty" >= 0) NOT VALID;']);
+    const validate = diffToValidateSQL(diff);
+    expect(validate[0]).toMatch(/^-- WARNING: checks "Item" against "qty" >= 0/);
+    expect(validate[1]).toBe('ALTER TABLE "Item" VALIDATE CONSTRAINT "Item_positive_check";');
+  });
+
+  it('drops then adds a changed check', () => {
+    const changed = { ...positive, sql: '"qty" > 0' };
+    expect(run(snap(base({ [positive.name]: positive })), snap(base({ [changed.name]: changed })))).toEqual([
+      'ALTER TABLE "Item" DROP CONSTRAINT IF EXISTS "Item_positive_check";',
+      'ALTER TABLE "Item" ADD CONSTRAINT "Item_positive_check" CHECK ("qty" > 0) NOT VALID;',
+    ]);
+  });
+
+  it('drops a removed check with no validate step', () => {
+    const diff = diffSnapshots(snap(base({ [positive.name]: positive })), snap(base()));
+    expect(diffToSQL(diff)).toEqual(['ALTER TABLE "Item" DROP CONSTRAINT IF EXISTS "Item_positive_check";']);
+    expect(diffToValidateSQL(diff)).toEqual([]);
+  });
+
+  it('renames the check when the table is renamed', () => {
+    const prev = snap(base({ [positive.name]: positive }));
+    const next = snap({ ...base(), name: 'Stock', checks: { Stock_positive_check: { name: 'Stock_positive_check', sql: positive.sql } } });
+    const renames: Rename[] = [{ kind: 'table', from: 'Item', to: 'Stock' }];
+    const diff = diffSnapshots(applyRenames(prev, renames), next);
+    expect(diffToSQL(diff, renames)).toEqual([
+      'ALTER TABLE "Item" RENAME TO "Stock";',
+      'ALTER TABLE "Stock" RENAME CONSTRAINT "Item_positive_check" TO "Stock_positive_check";',
+    ]);
+    expect(diffToValidateSQL(diff)).toEqual([]);
+  });
+
+  it('reads an old snapshot with no checks', () => {
+    const { checks: _, ...old } = base();
+    expect(run(snap(old), snap(base()))).toEqual([]);
+  });
+});

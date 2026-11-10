@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add `defineCheck(table, name, sql)` for a `CHECK` on the whole table. A check added to an existing table goes in as `NOT VALID` with a `_validate.sql` file. Renaming the table renames the check.
+- Add `defineForeignKey(table, key)`, so a table can point to itself.
+- `defineIndex` takes the built-in columns, like `id`, in its column list.
+
 ## 0.2.1 (2026-11-09)
 
 - `schema.json`, migrations and `schema.sql` list tables in the order `schema.ts` defines them. They were in alphabetical order, because JavaScript sorts module exports by name.
