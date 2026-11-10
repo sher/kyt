@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as v from 'valibot';
-import { defineTable, defineIndex, defineTrigger, withDefault } from './schema.js';
+import { defineCheck, defineForeignKey, defineTable, defineIndex, defineTrigger, withDefault } from './schema.js';
 import { serializeSchema, EMPTY_SNAPSHOT } from './snapshot.js';
 
 describe('serializeSchema', () => {
@@ -136,5 +136,39 @@ describe('serializeSchema', () => {
       foreignKeys: [{ columns: ['userId'], references: User }],
     });
     expect(serializeSchema({ Post }).tables.Post.foreignKeys).toEqual({});
+  });
+});
+
+describe('defineCheck and defineForeignKey', () => {
+  it('stores a check under the table name', () => {
+    const Item = defineTable('Item', { qty: v.pipe(v.number(), v.integer()) });
+    defineCheck(Item, 'positive', '"qty" >= 0');
+    expect(serializeSchema({ Item }).tables.Item.checks).toEqual({
+      Item_positive_check: { name: 'Item_positive_check', sql: '"qty" >= 0' },
+    });
+  });
+
+  it('refuses a check named like a picklist check', () => {
+    const Item = defineTable('Item', { kind: v.picklist(['a', 'b']) });
+    defineCheck(Item, 'kind', '"kind" <> \'a\'');
+    expect(() => serializeSchema({ Item })).toThrow('two checks named "Item_kind_check"');
+  });
+
+  it('lets a table point to itself', () => {
+    const Node = defineTable('Node', { parentId: v.nullable(v.bigint()) });
+    defineForeignKey(Node, { columns: ['parentId'], references: Node, onDelete: 'CASCADE' });
+    expect(serializeSchema({ Node }).tables.Node.foreignKeys.parentId).toEqual({
+      name: 'Node_parentId_fkey',
+      columns: ['parentId'],
+      refTable: 'Node',
+      refColumns: ['id'],
+      onDelete: 'CASCADE',
+    });
+  });
+
+  it('indexes a built-in column', () => {
+    const Item = defineTable('Item', { versionId: v.bigint() });
+    defineIndex(Item, ['versionId', 'id'], { unique: true });
+    expect(serializeSchema({ Item }).tables.Item.indexes.Item_versionId_id_uq.columns).toEqual(['versionId', 'id']);
   });
 });

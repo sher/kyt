@@ -3,6 +3,7 @@ import type {
   ForeignKeySnapshot,
   IndexSnapshot,
   SchemaSnapshot,
+  TableCheckSnapshot,
   TableSnapshot,
   TriggerSnapshot,
 } from './snapshot.js';
@@ -31,6 +32,12 @@ export interface ForeignKeyChange {
   after?: ForeignKeySnapshot;
 }
 
+export interface TableCheckChange {
+  name: string;
+  before?: TableCheckSnapshot;
+  after?: TableCheckSnapshot;
+}
+
 export interface TableChange {
   name: string;
   prevTable: TableSnapshot;
@@ -39,6 +46,7 @@ export interface TableChange {
   indexes: IndexChange[];
   triggers: TriggerChange[];
   foreignKeys: ForeignKeyChange[];
+  checks: TableCheckChange[];
 }
 
 export interface SchemaDiff {
@@ -148,8 +156,23 @@ export function diffSnapshots(prev: SchemaSnapshot, next: SchemaSnapshot): Schem
       }
     }
 
-    if (columns.length > 0 || indexes.length > 0 || triggers.length > 0 || foreignKeys.length > 0) {
-      changedTables.push({ name, prevTable, nextTable, columns, indexes, triggers, foreignKeys });
+    const checks: TableCheckChange[] = [];
+    const prevChecks = prevTable.checks ?? {};
+    const nextChecks = nextTable.checks ?? {};
+    for (const check of Object.values(nextChecks)) {
+      const prevCheck = prevChecks[check.name];
+      if (!prevCheck) checks.push({ name: check.name, after: check });
+      else if (prevCheck.sql !== check.sql) checks.push({ name: check.name, before: prevCheck, after: check });
+    }
+    for (const check of Object.values(prevChecks)) {
+      if (check.name in nextChecks) continue;
+      const renamed = checks.find((c) => !c.before && c.after!.sql === check.sql);
+      if (renamed) renamed.before = check;
+      else checks.push({ name: check.name, before: check });
+    }
+
+    if (columns.length > 0 || indexes.length > 0 || triggers.length > 0 || foreignKeys.length > 0 || checks.length > 0) {
+      changedTables.push({ name, prevTable, nextTable, columns, indexes, triggers, foreignKeys, checks });
     }
   }
 

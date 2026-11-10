@@ -4,6 +4,7 @@ import type {
   ColumnSnapshot,
   ForeignKeySnapshot,
   IndexSnapshot,
+  TableCheckSnapshot,
   TableSnapshot,
   TriggerSnapshot,
 } from './snapshot.js';
@@ -57,13 +58,25 @@ export function diffToValidateSQL(diff: SchemaDiff): string[] {
       }
       out.push(`ALTER TABLE ${q(change.name)} VALIDATE CONSTRAINT ${q(after.check.name)};`);
     }
+    for (const { before, after } of change.checks) {
+      if (!after || before?.sql === after.sql) continue;
+      out.push(
+        `-- WARNING: checks "${change.name}" against ${after.sql}. This fails if any row breaks it. Change those rows first.`,
+      );
+      out.push(`ALTER TABLE ${q(change.name)} VALIDATE CONSTRAINT ${q(after.name)};`);
+    }
   }
   return out;
 }
 
+function tableCheckSql(check: TableCheckSnapshot): string {
+  return `CONSTRAINT ${q(check.name)} CHECK (${check.sql})`;
+}
+
 function createTableSql(table: TableSnapshot): string {
   const cols = Object.values(table.columns).map((c) => `  ${columnSql(c)}`);
-  return `CREATE TABLE ${q(table.name)} (\n${cols.join(',\n')}\n);`;
+  const checks = Object.values(table.checks ?? {}).map((c) => `  ${tableCheckSql(c)}`);
+  return `CREATE TABLE ${q(table.name)} (\n${[...cols, ...checks].join(',\n')}\n);`;
 }
 
 function createIndexSql(table: string, idx: IndexSnapshot): string {
@@ -207,7 +220,17 @@ export function diffToSQL(diff: SchemaDiff, renames: Rename[] = []): string[] {
         out.push(dropForeignKeySql(change.name, fk.before));
       }
     }
+    for (const { before, after } of change.checks) {
+      if (before && after?.sql === before.sql) {
+        out.push(`ALTER TABLE ${q(change.name)} RENAME CONSTRAINT ${q(before.name)} TO ${q(after.name)};`);
+      } else if (before) {
+        out.push(`ALTER TABLE ${q(change.name)} DROP CONSTRAINT IF EXISTS ${q(before.name)};`);
+      }
+    }
     columnChangeSql(change, out);
+    for (const { before, after } of change.checks) {
+      if (after && before?.sql !== after.sql) out.push(`ALTER TABLE ${q(change.name)} ADD ${tableCheckSql(after)} NOT VALID;`);
+    }
     for (const idx of change.indexes) {
       if (idx.before) out.push(`DROP INDEX IF EXISTS ${q(idx.before.name)};`);
       if (idx.after) out.push(createIndexSql(change.name, idx.after));

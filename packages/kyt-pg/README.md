@@ -165,6 +165,26 @@ A deferred key lets one transaction insert rows in any order, such as a child be
 
 If you change only `deferrable`, `schema:diff` writes `ALTER CONSTRAINT`. It does not drop and add the key again.
 
+A table cannot name itself inside its own `defineTable` call. Add that key after the table with `defineForeignKey`:
+
+```ts
+const Section = defineTable('Section', { parentId: v.nullable(v.bigint()) });
+defineForeignKey(Section, { columns: ['parentId'], references: Section, onDelete: 'CASCADE' });
+```
+
+`defineForeignKey` takes the same fields as an entry in `foreignKeys`.
+
+## Checks
+
+`defineCheck` adds a `CHECK` on the whole table. Write the rule in SQL, with quoted names:
+
+```ts
+defineCheck(Item, 'qtyPositive', '"qty" >= 0');
+defineCheck(Version, 'approvedAt', `("status" = 'approved') = ("approvedAt" IS NOT NULL)`);
+```
+
+The check is named `<Table>_<name>_check`. A check added to an existing table goes in as `NOT VALID` and gets a `_validate.sql` file, the same way as a picklist check. A changed rule drops the old check and adds the new one. Renaming the table renames the check.
+
 ## Naming style
 
 Name tables in PascalCase and in the singular, like `User` and `PublishedPost`. Name columns in camelCase, like `fullName`.
@@ -305,6 +325,7 @@ From `kyt-pg`:
 
 - `defineTable(name, columns, options?)`
 - `defineIndex(table, columns, options?)`
+- `defineForeignKey(table, key)`, `defineCheck(table, name, sql)`
 - `defineTrigger(name, options)`
 - `defineVirtualTable(name, source, columns, options?)`
 - `withDefault(schema, value)`, `sqlDefault(sql)`, `numeric(precision, scale?)`

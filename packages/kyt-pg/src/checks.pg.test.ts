@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import * as v from 'valibot';
 import { freshDb } from '../test/pg.js';
-import { defineTable, numeric } from './schema.js';
+import { defineCheck, defineForeignKey, defineTable, numeric } from './schema.js';
 import { serializeSchema, EMPTY_SNAPSHOT } from './snapshot.js';
 import { diffSnapshots } from './diff.js';
 import { diffToSQL, diffToValidateSQL } from './sql.js';
@@ -21,7 +21,9 @@ beforeAll(async () => {
     note: v.nullable(v.picklist(['new', 'used'])),
     price: v.pipe(v.string(), v.decimal(), numeric(18, 2)),
   });
-  const Box = defineTable('Box', { label: v.string() });
+  defineCheck(Item, 'price', '"price" >= 0');
+  const Box = defineTable('Box', { label: v.string(), parentId: v.nullable(v.bigint()) });
+  defineForeignKey(Box, { columns: ['parentId'], references: Box });
   writeFileSync(join(dir, '0001.sql'), diffToSQL(diffSnapshots(EMPTY_SNAPSHOT, serializeSchema({ Item, Box }))).join('\n'));
   await migrate(db.sql, { dir, log: () => {} });
 });
@@ -81,4 +83,14 @@ it('adds a narrowed check as NOT VALID, then the validate file finds the old row
     await tagDb.close();
     rmSync(tagDir, { recursive: true, force: true });
   }
+});
+
+it('refuses a row that breaks a table check', async () => {
+  await expect(db.sql`insert into "Item" (kind, price) values ('tool', '-1')`).rejects.toThrow('Item_price_check');
+});
+
+it('refuses a parent that does not exist in a self reference', async () => {
+  const [root] = await db.sql`insert into "Box" (label) values ('root') returning id`;
+  await db.sql`insert into "Box" (label, "parentId") values ('child', ${root.id})`;
+  await expect(db.sql`insert into "Box" (label, "parentId") values ('lost', -1)`).rejects.toThrow('Box_parentId_fkey');
 });
