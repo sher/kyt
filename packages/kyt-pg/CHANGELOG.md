@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-11-10)
 
 - Add `defineCheck(table, name, sql)` for a `CHECK` on the whole table. A check added to an existing table goes in as `NOT VALID` with a `_validate.sql` file. Renaming the table renames the check.
 - Add `defineForeignKey(table, key)`, so a table can point to itself.
